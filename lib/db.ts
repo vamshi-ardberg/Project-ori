@@ -111,13 +111,10 @@ export async function loadWorkspaceState(workspaceId: string): Promise<Workspace
   await ensureSchema();
   await ensureWorkspace(workspaceId);
   const sql = getSql();
-  const workspace = await sql`SELECT state_initialized, updated_at FROM sentinel_workspaces WHERE id=${workspaceId} LIMIT 1`;
-  const snapshotRows = await sql`SELECT state, updated_at FROM sentinel_workspace_state WHERE user_email=${workspaceId} LIMIT 1`;
+  const workspace = await sql`SELECT state_initialized FROM sentinel_workspaces WHERE id=${workspaceId} LIMIT 1`;
+  const snapshotRows = await sql`SELECT state FROM sentinel_workspace_state WHERE user_email=${workspaceId} LIMIT 1`;
   const snapshot = snapshotRows[0]?.state as WorkspaceState | undefined;
-  const snapshotIsCurrent = snapshotRows[0]?.updated_at && workspace[0]?.updated_at
-    ? new Date(snapshotRows[0].updated_at).getTime() >= new Date(workspace[0].updated_at).getTime()
-    : Boolean(snapshotRows[0]?.updated_at);
-  if (snapshotIsCurrent && snapshot && Array.isArray(snapshot.risks) && Array.isArray(snapshot.connectors) && Array.isArray(snapshot.profiles)) {
+  if (snapshot && Array.isArray(snapshot.risks) && Array.isArray(snapshot.connectors) && Array.isArray(snapshot.profiles)) {
     return { ...snapshot, risks: snapshot.risks.map((risk: any) => ({ ...risk, decision: normalizeDecisionRationale(risk.decision) })) };
   }
   if (!workspace[0]?.state_initialized) {

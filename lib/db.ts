@@ -5,7 +5,7 @@ export type WorkspaceState = { risks: any[]; connectors: any[]; profiles: any[] 
 let schemaReady: Promise<void> | null = null;
 
 export function getSql() {
-  const url = process.env.DATABASE_URL || process.env.DATABASE_URL_POOLED;
+  const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not configured");
   return neon(url);
 }

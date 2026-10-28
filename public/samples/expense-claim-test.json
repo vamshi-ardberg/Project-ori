@@ -1,0 +1,15 @@
+{
+  "source": "expense-claim-test",
+  "claim": {
+    "employee": "Maya Rao",
+    "category": "Client meal",
+    "amount": 185,
+    "currency": "USD",
+    "policyLimit": 100,
+    "receiptAttached": true,
+    "managerApproved": false,
+    "duplicateDetected": false,
+    "submittedDaysAfterExpense": 2
+  },
+  "notes": "Six customers attended, but attendee names were not included."
+}

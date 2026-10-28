@@ -1,35 +1,25 @@
-# Decision providers: Jev primary, GPT-6 Luna fallback
+# OpenAI Decisions provider: GPT-6 Luna
 
-Sentinel uses **Jev through Vercel AI Gateway** first, then falls back to **GPT-6 Luna through OpenAI's native Decisions API** if Jev is unavailable, times out, or returns an invalid response.
+Sentinel calls OpenAI's native Decisions API directly with **GPT-6 Luna**. It does not use Vercel AI Gateway or a fallback provider.
 
 ## Environment variables
 
 ```env
-# Vercel AI Gateway key (not a TypeSafe API key)
-AI_GATEWAY_API_KEY=your_vercel_ai_gateway_key
-JEV_PRIMARY_ENABLED=true
-JEV_MIN_CONFIDENCE=0.65
-
-# Direct OpenAI API key for GPT-6 Luna fallback
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_FALLBACK_MODEL=gpt-6-luna
+DECISION_MIN_CONFIDENCE=0.65
 ```
 
-If your key variable is currently named `VERCEL_GATEWAY_KEY`, copy its value into `AI_GATEWAY_API_KEY` or rename the variable consistently in Vercel and `.env.local`. Do not put keys in client-side code or commit `.env.local`.
+Keep the key server-side and never commit `.env.local`.
 
-## How it works
+## Decision profile mapping
 
-1. `POST /api/decisions` accepts requests from the shared Sentinel workspace.
-2. It calls Jev with model ID `typesafe-ai/jev` through Vercel AI Gateway using AI SDK's `experimental_evaluate` API.
-3. If Jev fails, it calls `https://api.openai.com/v1/decisions` with model `gpt-6-luna` and the same predicate/choice/score questions.
-4. Sentinel applies deterministic review rules: High/Critical severity, confidence below `JEV_MIN_CONFIDENCE`, or missing evidence require human review.
-5. Response metadata includes `provider` and `fallbackUsed`.
+- **Predicate** returns whether a material risk is detected and its probability.
+- **Choice** selects one of the profile's allowed risk types.
+- **Score** assigns one ordered severity level, such as Low, Medium, High, or Critical.
 
-Jev uses Vercel AI Gateway billing; Luna fallback uses your direct OpenAI API billing. The gateway key is not a TypeSafe key. Jev's Gateway model ID is `typesafe-ai/jev`; Luna's direct OpenAI Decisions model is `gpt-6-luna`.
+The application also applies a deterministic approval rule: High/Critical severity, confidence below `DECISION_MIN_CONFIDENCE`, or missing evidence requires human review.
 
 ## Test request
-
-Call `POST /api/decisions` from the application:
 
 ```json
 {
@@ -39,18 +29,14 @@ Call `POST /api/decisions` from the application:
     "evidence": "Issue tracker shows three unresolved critical bugs; release is scheduled in two weeks."
   },
   "profile": {
-    "predicate": "Does this require human review?",
-    "choiceOptions": ["Delivery delay", "Quality issue", "Resource dependency", "No material risk"],
-    "scoreLevels": ["Low", "Medium", "High", "Critical"]
+    "name": "Release readiness",
+    "predicate": "Is the release at risk?",
+    "choices": "Release delay, Quality issue, Resource dependency, No material risk",
+    "scores": "Low, Medium, High, Critical"
   }
 }
 ```
 
-The route has no application-level authentication. Do not expose it publicly without an external access layer.
+Send it to `POST /api/decisions`. A successful result contains `riskDetected`, `riskProbability`, `riskType`, `severity`, `confidence`, `humanApprovalRequired`, `rationale`, and `recommendedActions`.
 
-## Reliability and safety
-
-- A fallback is attempted for runtime errors; it does not guarantee the two providers will agree.
-- If both providers fail, the endpoint returns HTTP 503 and preserves provider diagnostics without exposing credentials.
-- Model decisions are advisory. Do not allow model output alone to authorize payments, access changes, or other sensitive actions.
-- Calibrate confidence thresholds against reviewed Sentinel cases before production use.
+Model decisions are advisory. Do not allow the model output alone to authorize payments, access changes, or other sensitive actions.

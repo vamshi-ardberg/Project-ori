@@ -19,7 +19,7 @@ Open http://localhost:3000. No sign-in is required.
 - `DATABASE_URL`: Neon pooled PostgreSQL connection string.
 - `SENTINEL_WORKSPACE_ID`: optional stable key for the shared workspace; defaults to `default`. To keep data previously stored under a Google account, set this to that account's lowercase email address.
 
-Optional variables are documented in `.env.example`: Jev, GitHub, Jira, Google Drive and event ingestion.
+Optional variables are documented in `.env.example`: OpenAI Decisions, GitHub, Jira, Google Drive and event ingestion.
 
 ## Vercel + Neon deployment
 
@@ -32,11 +32,11 @@ Optional variables are documented in `.env.example`: Jev, GitHub, Jira, Google D
 
 ## Implemented in this starter
 
-- Shared workspace data stored in Neon JSONB; audit events stored in PostgreSQL.
-- Jev-first decision endpoint: calls Jev System One for Predicate (`noul`), Choice and Score decisions; if Jev is missing, unavailable, rate-limited, or returns an invalid response, it falls back to the direct OpenAI API. Provider credentials stay server-side. Human review is required for High/Critical severity, low confidence, or missing evidence. Configure `AI_GATEWAY_API_KEY` and `OPENAI_API_KEY` in `.env.local` and Vercel.
+- Normalized Neon storage for workspaces, risks, connectors, decision profiles, connector syncs, decision runs, ingested events, and audit history. Existing `sentinel_workspace_state` JSONB data is migrated automatically on first access.
+- Luna-only decision endpoint: calls OpenAI's native Decisions API with `gpt-6-luna` and evaluates a Predicate, an allowed Choice, and an ordered Score. Provider credentials stay server-side. Human review is required for High/Critical severity, low confidence, or missing evidence. Configure `OPENAI_API_KEY` in `.env.local` and Vercel.
 - Live GitHub open pull-request, Jira unresolved-issue, and Google Drive shared-folder metadata ingestion when credentials are configured.
 - Token-protected generic ingestion endpoint for HRIS/supplier/Slack/internal events.
-- CSV export and responsive UI.
+- Browser-local quick testing with typed questions or TXT/Markdown/CSV/JSON uploads, plus CSV export and a responsive UI.
 
 ## Important integration boundaries
 
@@ -47,20 +47,15 @@ Optional variables are documented in `.env.example`: Jev, GitHub, Jira, Google D
 - This is an integration-ready starter, not a claim of production security certification. Review the code and provider permissions before using real HR or payroll data.
 
 
-## Jev primary + OpenAI fallback
+## OpenAI Decisions with GPT-6 Luna
 
-The `POST /api/decisions` route tries Jev first when `JEV_PRIMARY_ENABLED=true` and `AI_GATEWAY_API_KEY` is set. On a Jev failure it tries GPT-6 Luna through the native OpenAI Decisions API using `OPENAI_API_KEY` and `OPENAI_FALLBACK_MODEL` (defaults to `gpt-6-luna`). The response includes `provider` and `fallbackUsed` so you can observe which provider completed the decision. It returns HTTP 503 only if neither provider can complete the request.
+The `POST /api/decisions` route calls the native OpenAI Decisions API directly using `OPENAI_API_KEY`. The model is fixed to `gpt-6-luna`. The response includes the Predicate result and probability, selected Choice, severity Score, confidence, review policy, rationale, and recommended actions.
 
 Required decision environment variables:
 
 ```env
-AI_GATEWAY_API_KEY=your-jev-key
-TYPESAFE_API_URL=https://api.typesafe.ai/v1/systemone
-TYPESAFE_MODEL=jev-latest
-JEV_PRIMARY_ENABLED=true
-JEV_MIN_CONFIDENCE=0.65
 OPENAI_API_KEY=your-openai-api-key
-OPENAI_FALLBACK_MODEL=gpt-6-luna
+DECISION_MIN_CONFIDENCE=0.65
 ```
 
-Never commit real credentials. If a credential was pasted into chat, rotate it before deployment. `OPENAI_API_KEY` is sent only from the server to `https://api.openai.com/v1/chat/completions`; it is not sent to the browser.
+Never commit real credentials. If a credential was pasted into chat, rotate it before deployment. `OPENAI_API_KEY` is sent only from the server to `https://api.openai.com/v1/decisions`; it is not sent to the browser.

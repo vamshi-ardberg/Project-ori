@@ -4,13 +4,15 @@
 
 ### GitHub pull requests
 1. Create a fine-grained GitHub personal access token restricted to the target repository. Grant read-only **Pull requests** and **Metadata** permissions.
-2. Set `GITHUB_TOKEN` and `GITHUB_REPO=owner/repository` in `.env.local` and Vercel project environment variables.
-3. Open Sentinel and use **Data connectors → Sync configured sources**. The sync endpoint fetches open pull requests and highlights items not updated in 48 hours.
+2. For a one-time test, open **Data connectors → GitHub → Connect / setup**, then enter the repository URL and token.
+3. For persistent server-side sync, set `GITHUB_TOKEN` and `GITHUB_REPO=owner/repository` in `.env.local` and Vercel project environment variables.
+4. The sync endpoint fetches open pull requests and highlights items not updated in 48 hours.
 
 ### Jira Cloud issues
 1. Create an Atlassian API token and use the Atlassian account email that owns it.
-2. Set `JIRA_BASE_URL=https://your-domain.atlassian.net`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and optionally `JIRA_JQL`.
-3. Use **Sync configured sources**. The sync endpoint reads unresolved issues and their priority, status, assignee and dates. Restrict the token to the minimum required access.
+2. For a one-time test, open **Data connectors → Jira → Connect / setup**, then enter the Jira Cloud URL, email, API token, and optional JQL.
+3. For persistent server-side sync, set `JIRA_BASE_URL=https://your-domain.atlassian.net`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, and optionally `JIRA_JQL`.
+4. The sync endpoint reads unresolved issues and their priority, status, assignee and dates. Restrict the token to the minimum required access.
 
 ## Google Drive shared folder
 
@@ -25,4 +27,4 @@ A generic ingestion endpoint is available at `POST /api/ingest`. Set a long rand
 
 ## Credential handling
 
-Never place provider tokens in frontend code, `NEXT_PUBLIC_*` variables, Git commits, or browser local storage. Put credentials in Vercel Project → Settings → Environment Variables and redeploy. For local development use `.env.local` (ignored by Git).
+Never place provider tokens in frontend code, `NEXT_PUBLIC_*` variables, Git commits, or browser local storage. Credentials entered in the connector forms are held only in component memory, sent once to the server, and cleared after a successful connection. For persistent connections, put credentials in Vercel Project → Settings → Environment Variables and redeploy. For local development use `.env.local` (ignored by Git).

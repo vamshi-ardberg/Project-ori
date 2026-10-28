@@ -8,6 +8,6 @@ export async function POST(request: Request) {
   let body: any; try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
   if (!body?.source || !body?.event || typeof body.event !== "object") return NextResponse.json({ error: "Expected source and event object" }, { status: 400 });
   const owner = getWorkspaceId();
-  try { await ensureSchema(); const sql = getSql(); await sql`INSERT INTO sentinel_audit_events (user_email, event_type, summary) VALUES (${owner}, ${`ingest:${String(body.source).slice(0,60)}`}, ${JSON.stringify(body.event).slice(0,1000)})`; return NextResponse.json({ ok: true, accepted: true }, { status: 202 }); }
+  try { await ensureSchema(); const sql = getSql(); await sql`INSERT INTO sentinel_workspaces (id, name) VALUES (${owner}, 'Sentinel workspace') ON CONFLICT (id) DO NOTHING`; await sql`INSERT INTO sentinel_ingested_events (workspace_id, source, payload) VALUES (${owner}, ${String(body.source).slice(0,60)}, ${JSON.stringify(body.event)}::jsonb)`; await sql`INSERT INTO sentinel_audit_events (workspace_id, event_type, summary) VALUES (${owner}, ${`ingest:${String(body.source).slice(0,60)}`}, ${JSON.stringify(body.event).slice(0,1000)})`; return NextResponse.json({ ok: true, accepted: true }, { status: 202 }); }
   catch { return NextResponse.json({ error: "Could not persist ingestion event" }, { status: 503 }); }
 }

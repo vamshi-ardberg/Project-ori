@@ -1,0 +1,20 @@
+{
+  "source": "release-readiness-test",
+  "release": {
+    "name": "Customer portal Q4 release",
+    "date": "2026-11-15",
+    "daysRemaining": 14
+  },
+  "signals": {
+    "criticalBugs": 3,
+    "blockedPullRequests": 2,
+    "oldestBlockedHours": 61,
+    "testPassRatePercent": 84,
+    "releaseOwnerAvailable": false
+  },
+  "constraints": [
+    "Regulatory review must finish before launch",
+    "The customer contract deadline cannot move"
+  ],
+  "notes": "A backup release owner has not been assigned."
+}

@@ -17,7 +17,8 @@ async function createSchema() {
   await sql`CREATE TABLE IF NOT EXISTS sentinel_risks (workspace_id TEXT NOT NULL REFERENCES sentinel_workspaces(id) ON DELETE CASCADE, id TEXT NOT NULL, title TEXT NOT NULL, team TEXT NOT NULL, level TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL, source TEXT NOT NULL, time_label TEXT NOT NULL, owner TEXT NOT NULL, evidence TEXT NOT NULL, recommendation TEXT NOT NULL, decision_output JSONB, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, id))`;
   await sql`ALTER TABLE sentinel_risks ADD COLUMN IF NOT EXISTS decision_output JSONB`;
   await sql`CREATE TABLE IF NOT EXISTS sentinel_connectors (workspace_id TEXT NOT NULL REFERENCES sentinel_workspaces(id) ON DELETE CASCADE, name TEXT NOT NULL, team TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, last_sync TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, name))`;
-  await sql`CREATE TABLE IF NOT EXISTS sentinel_decision_profiles (workspace_id TEXT NOT NULL REFERENCES sentinel_workspaces(id) ON DELETE CASCADE, id TEXT NOT NULL, name TEXT NOT NULL, team TEXT NOT NULL, description TEXT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT FALSE, predicate TEXT NOT NULL, choices TEXT NOT NULL, scores TEXT NOT NULL, fields TEXT NOT NULL, approval TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, id))`;
+  await sql`CREATE TABLE IF NOT EXISTS sentinel_decision_profiles (workspace_id TEXT NOT NULL REFERENCES sentinel_workspaces(id) ON DELETE CASCADE, id TEXT NOT NULL, name TEXT NOT NULL, team TEXT NOT NULL, description TEXT NOT NULL, is_active BOOLEAN NOT NULL DEFAULT FALSE, predicate TEXT NOT NULL, choices TEXT NOT NULL, scores TEXT NOT NULL, fields TEXT NOT NULL, approval TEXT NOT NULL, sources TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (workspace_id, id))`;
+  await sql`ALTER TABLE sentinel_decision_profiles ADD COLUMN IF NOT EXISTS sources TEXT NOT NULL DEFAULT ''`;
   await sql`CREATE TABLE IF NOT EXISTS sentinel_audit_events (id BIGSERIAL PRIMARY KEY, workspace_id TEXT, user_email TEXT, event_type TEXT NOT NULL, summary TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
   await sql`ALTER TABLE sentinel_audit_events ADD COLUMN IF NOT EXISTS workspace_id TEXT`;
   await sql`ALTER TABLE sentinel_audit_events ADD COLUMN IF NOT EXISTS user_email TEXT`;
@@ -56,6 +57,20 @@ function uniqueBy(items: any[], key: string) {
   return [...unique.values()];
 }
 
+function normalizeDecisionRationale(decision: any) {
+  if (!decision || decision.status !== "success") return decision;
+  const likelihood = typeof decision.riskProbability === "number" ? `${Math.round(decision.riskProbability * 100)}% probability of material risk` : "Probability was not returned";
+  return {
+    ...decision,
+    rationale: [
+      `Risk likelihood: ${likelihood}`,
+      `Classification: ${decision.riskType || "No category was returned"}`,
+      `Severity: ${decision.severity || "No severity was returned"}`,
+      `Review requirement: ${decision.humanApprovalRequired ? "Human review is required before action" : "Eligible for the configured automated policy"}`,
+    ].join("\n"),
+  };
+}
+
 export async function saveWorkspaceState(workspaceId: string, state: WorkspaceState, recordAudit = true) {
   await ensureSchema();
   await ensureWorkspace(workspaceId);
@@ -79,10 +94,10 @@ export async function saveWorkspaceState(workspaceId: string, state: WorkspaceSt
     ON CONFLICT (workspace_id, name) DO UPDATE SET team=EXCLUDED.team, description=EXCLUDED.description, status=EXCLUDED.status, last_sync=EXCLUDED.last_sync, sort_order=EXCLUDED.sort_order, updated_at=NOW()`;
   await sql`DELETE FROM sentinel_connectors WHERE workspace_id=${workspaceId} AND name NOT IN (SELECT value #>> '{}' FROM jsonb_array_elements(${JSON.stringify(connectors.map((item) => String(item.name)))}::jsonb))`;
 
-  await sql`INSERT INTO sentinel_decision_profiles (workspace_id, id, name, team, description, is_active, predicate, choices, scores, fields, approval, sort_order)
-    SELECT ${workspaceId}, item->>'id', COALESCE(item->>'name',''), COALESCE(item->>'team',''), COALESCE(item->>'description',''), COALESCE((item->>'active')::BOOLEAN,FALSE), COALESCE(item->>'predicate',''), COALESCE(item->>'choices',''), COALESCE(item->>'scores',''), COALESCE(item->>'fields',''), COALESCE(item->>'approval',''), position::INTEGER
+  await sql`INSERT INTO sentinel_decision_profiles (workspace_id, id, name, team, description, is_active, predicate, choices, scores, fields, approval, sources, sort_order)
+    SELECT ${workspaceId}, item->>'id', COALESCE(item->>'name',''), COALESCE(item->>'team',''), COALESCE(item->>'description',''), COALESCE((item->>'active')::BOOLEAN,FALSE), COALESCE(item->>'predicate',''), COALESCE(item->>'choices',''), COALESCE(item->>'scores',''), COALESCE(item->>'fields',''), COALESCE(item->>'approval',''), COALESCE(item->>'sources',''), position::INTEGER
     FROM jsonb_array_elements(${profileJson}::jsonb) WITH ORDINALITY AS entries(item, position)
-    ON CONFLICT (workspace_id, id) DO UPDATE SET name=EXCLUDED.name, team=EXCLUDED.team, description=EXCLUDED.description, is_active=EXCLUDED.is_active, predicate=EXCLUDED.predicate, choices=EXCLUDED.choices, scores=EXCLUDED.scores, fields=EXCLUDED.fields, approval=EXCLUDED.approval, sort_order=EXCLUDED.sort_order, updated_at=NOW()`;
+    ON CONFLICT (workspace_id, id) DO UPDATE SET name=EXCLUDED.name, team=EXCLUDED.team, description=EXCLUDED.description, is_active=EXCLUDED.is_active, predicate=EXCLUDED.predicate, choices=EXCLUDED.choices, scores=EXCLUDED.scores, fields=EXCLUDED.fields, approval=EXCLUDED.approval, sources=EXCLUDED.sources, sort_order=EXCLUDED.sort_order, updated_at=NOW()`;
   await sql`DELETE FROM sentinel_decision_profiles WHERE workspace_id=${workspaceId} AND id NOT IN (SELECT value #>> '{}' FROM jsonb_array_elements(${JSON.stringify(profiles.map((item) => String(item.id)))}::jsonb))`;
 
   await sql`UPDATE sentinel_workspaces SET state_initialized=TRUE, updated_at=NOW() WHERE id=${workspaceId}`;
@@ -109,9 +124,9 @@ export async function loadWorkspaceState(workspaceId: string): Promise<Workspace
       COALESCE(risk.decision_output, CASE WHEN run.outcome IS NOT NULL THEN jsonb_build_object('status','success','profileName',run.outcome->'profileUsed'->>'name','provider',run.provider,'model',run.model,'fallbackUsed',run.fallback_used,'riskDetected',run.outcome->'assessment'->'riskDetected','riskProbability',run.outcome->'assessment'->'riskProbability','riskType',run.outcome->'assessment'->>'riskType','severity',run.outcome->'assessment'->>'severity','confidence',run.outcome->'assessment'->'confidence','policy',run.outcome->'assessment'->>'policy','humanApprovalRequired',run.outcome->'assessment'->'humanApprovalRequired','rationale',run.outcome->'assessment'->>'rationale','recommendedActions',run.outcome->'assessment'->'recommendedActions') WHEN run.error IS NOT NULL THEN jsonb_build_object('status','failed','error',run.error) ELSE NULL END) AS decision
       FROM sentinel_risks risk LEFT JOIN LATERAL (SELECT outcome, error, provider, model, fallback_used FROM sentinel_decision_runs WHERE workspace_id=${workspaceId} AND risk_title=risk.title ORDER BY created_at DESC LIMIT 1) run ON TRUE WHERE risk.workspace_id=${workspaceId} ORDER BY risk.sort_order, risk.created_at`,
     sql`SELECT name, team, description, status, last_sync AS "lastSync" FROM sentinel_connectors WHERE workspace_id=${workspaceId} ORDER BY sort_order, created_at`,
-    sql`SELECT id, name, team, description, is_active AS active, predicate, choices, scores, fields, approval FROM sentinel_decision_profiles WHERE workspace_id=${workspaceId} ORDER BY sort_order, created_at`,
+    sql`SELECT id, name, team, description, is_active AS active, predicate, choices, scores, fields, approval, sources FROM sentinel_decision_profiles WHERE workspace_id=${workspaceId} ORDER BY sort_order, created_at`,
   ]);
-  return { risks: [...risks], connectors: [...connectors], profiles: [...profiles] };
+  return { risks: [...risks].map((risk: any) => ({ ...risk, decision: normalizeDecisionRationale(risk.decision) })), connectors: [...connectors], profiles: [...profiles] };
 }
 
 export async function recordConnectorSync(workspaceId: string, sources: any[], errors: string[]) {

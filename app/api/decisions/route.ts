@@ -44,13 +44,6 @@ function recommendedActions(severity: Severity, riskDetected: boolean) {
   return ["Validate the evidence with the responsible team.", "Assign an owner and monitoring date."];
 }
 
-function evidenceExcerpt(state: any) {
-  const evidence = String(state?.evidence ?? "").replace(/\s+/g, " ").trim();
-  const situation = String(state?.detail ?? "").replace(/\s+/g, " ").trim();
-  const source = evidence || situation;
-  return source.length > 280 ? `${source.slice(0, 277)}...` : source;
-}
-
 async function callOpenAIDecisions(state: any, profile: any, choiceOptions: string[], scoreLevels: string[], hasEvidence: boolean) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
@@ -83,16 +76,16 @@ async function callOpenAIDecisions(state: any, profile: any, choiceOptions: stri
   const severity = normalizeSeverity(severityAnswer.probabilities?.find((item: any) => Number(item.value) === score)?.label ?? levels[score]);
   const confidence = clamp01(Math.min(Number(typeAnswer.confidence ?? 0), Number(severityAnswer.confidence ?? 0)), 0);
   const riskDetected = probability >= 0.5;
-  const evidence = evidenceExcerpt(state);
   const assessment = enforcePolicy({
     riskDetected,
     riskProbability: probability,
     riskType,
     severity,
     confidence,
-    rationale: `Luna estimates a ${Math.round(probability * 100)}% probability of material risk, classifies it as ${riskType}, and scores the severity as ${severity}.${evidence ? ` Key submitted evidence: ${evidence}` : " No supporting evidence was supplied."}`,
+    rationale: "",
     recommendedActions: recommendedActions(severity, riskDetected),
   }, hasEvidence);
+  assessment.rationale = [`Risk likelihood: ${Math.round(probability * 100)}% probability of material risk`, `Classification: ${riskType}`, `Severity: ${severity}`, `Review requirement: ${assessment.humanApprovalRequired ? "Human review is required before action" : "Eligible for the configured automated policy"}`].join("\n");
   return { assessment, model: payload.model ?? "gpt-6-luna", provider: "openai-decisions", usage: payload.usage ?? null };
 }
 

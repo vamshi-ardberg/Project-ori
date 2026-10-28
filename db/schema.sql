@@ -60,11 +60,14 @@ CREATE TABLE IF NOT EXISTS sentinel_decision_profiles (
   scores TEXT NOT NULL,
   fields TEXT NOT NULL,
   approval TEXT NOT NULL,
+  sources TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (workspace_id, id)
 );
+
+ALTER TABLE sentinel_decision_profiles ADD COLUMN IF NOT EXISTS sources TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS sentinel_audit_events (
   id BIGSERIAL PRIMARY KEY,

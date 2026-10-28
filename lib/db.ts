@@ -10,5 +10,18 @@ export async function ensureSchema() {
   const sql = getSql();
   await sql`CREATE TABLE IF NOT EXISTS sentinel_workspace_state (user_email TEXT PRIMARY KEY, state JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
   await sql`CREATE TABLE IF NOT EXISTS sentinel_audit_events (id BIGSERIAL PRIMARY KEY, user_email TEXT NOT NULL, event_type TEXT NOT NULL, summary TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;
+  await sql`DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sentinel_audit_events'
+          AND column_name = 'workspace_id'
+      ) THEN
+        ALTER TABLE sentinel_audit_events ALTER COLUMN workspace_id DROP NOT NULL;
+      END IF;
+    END
+  $$`;
   await sql`CREATE INDEX IF NOT EXISTS sentinel_audit_user_created_idx ON sentinel_audit_events (user_email, created_at DESC)`;
 }

@@ -139,17 +139,20 @@ export default function Home(){
  const [mobileNav,setMobileNav]=useState(false);
  const saveQueueRef=useRef<Promise<void>>(Promise.resolve());
  const workspaceSnapshotRef=useRef<WorkspaceSnapshot>({risks:seedRisks,connectors:seedConnectors,profiles:seedProfiles});
+ const skipNextAutosaveRef=useRef(true);
+ const dirtyRef=useRef(false);
+ const saveVersionRef=useRef(0);
  workspaceSnapshotRef.current={risks,connectors,profiles};
- const persistWorkspace=useCallback((snapshot:WorkspaceSnapshot)=>{
+ const persistWorkspace=useCallback((snapshot:WorkspaceSnapshot,version:number)=>{
   setPersistenceStatus("saving");
   const save=saveQueueRef.current.catch(()=>undefined).then(async()=>{
    setPersistenceStatus("saving");
    const response=await fetch("/api/data",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(snapshot)});
    if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.error||"Could not save workspace to Neon.");}
-   setPersistenceStatus("saved");
+   if(version===saveVersionRef.current){dirtyRef.current=false;setPersistenceStatus("saved");}
   });
   saveQueueRef.current=save.catch(()=>undefined);
-  return save.catch(error=>{setPersistenceStatus("error");throw error;});
+  return save.catch(error=>{if(version===saveVersionRef.current)setPersistenceStatus("error");throw error;});
  },[]);
  useEffect(()=>{
   if(!modal&&!selectedRisk&&!mobileNav)return;
@@ -163,8 +166,8 @@ export default function Home(){
   return()=>{document.removeEventListener("keydown",closeOnEscape);document.body.style.overflow=previousOverflow;document.body.style.paddingRight=previousPaddingRight;};
  },[modal,selectedRisk,mobileNav]);
  useEffect(()=>{let cancelled=false;(async()=>{try{const res=await fetch("/api/data",{cache:"no-store"});if(!res.ok)throw new Error("Neon data unavailable");const payload=await res.json();if(cancelled)return;if(payload.state){const s=payload.state;if(Array.isArray(s.risks))setRisks(s.risks.map((risk:Risk)=>({...risk,decision:normalizeDecisionOutput(risk.decision)})));if(Array.isArray(s.connectors))setConnectors(s.connectors);if(Array.isArray(s.profiles))setProfiles(s.profiles.some((profile:Profile)=>profile.id===expenseClaimProfile.id)?s.profiles:[...s.profiles,expenseClaimProfile]);}else{await fetch("/api/data",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({risks:seedRisks,connectors:seedConnectors,profiles:seedProfiles})});}setHydrated(true);}catch{if(!cancelled){setHydrated(true);notify("Database unavailable. Check DATABASE_URL before relying on saved data.");}}})();return()=>{cancelled=true;}},[]);
- useEffect(()=>{if(!hydrated)return;setPersistenceStatus("saving");const timer=window.setTimeout(()=>{persistWorkspace({risks,connectors,profiles}).catch(error=>notify(error instanceof Error?error.message:"Could not save workspace."));},150);return()=>window.clearTimeout(timer);},[risks,connectors,profiles,hydrated,persistWorkspace]);
- useEffect(()=>{if(!hydrated)return;const flushLatest=()=>{const snapshot=workspaceSnapshotRef.current;fetch("/api/data",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(snapshot),keepalive:true}).catch(()=>undefined);};const warnIfSaving=(event:BeforeUnloadEvent)=>{if(persistenceStatus!=="saving")return;event.preventDefault();event.returnValue="";};window.addEventListener("pagehide",flushLatest);window.addEventListener("beforeunload",warnIfSaving);return()=>{window.removeEventListener("pagehide",flushLatest);window.removeEventListener("beforeunload",warnIfSaving);};},[hydrated,persistenceStatus]);
+ useEffect(()=>{if(!hydrated)return;if(skipNextAutosaveRef.current){skipNextAutosaveRef.current=false;setPersistenceStatus("saved");return;}const version=++saveVersionRef.current;dirtyRef.current=true;setPersistenceStatus("saving");const snapshot={risks,connectors,profiles};const timer=window.setTimeout(()=>{persistWorkspace(snapshot,version).catch(error=>notify(error instanceof Error?error.message:"Could not save workspace."));},150);return()=>window.clearTimeout(timer);},[risks,connectors,profiles,hydrated,persistWorkspace]);
+ useEffect(()=>{if(!hydrated)return;const flushLatest=()=>{if(!dirtyRef.current)return;const snapshot=workspaceSnapshotRef.current;fetch("/api/data",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(snapshot),keepalive:true}).catch(()=>undefined);};const warnIfSaving=(event:BeforeUnloadEvent)=>{if(!dirtyRef.current)return;event.preventDefault();event.returnValue="";};window.addEventListener("pagehide",flushLatest);window.addEventListener("beforeunload",warnIfSaving);return()=>{window.removeEventListener("pagehide",flushLatest);window.removeEventListener("beforeunload",warnIfSaving);};},[hydrated]);
  function notify(s:string){setToast(s);window.setTimeout(()=>setToast(""),2600);}
  function useTestData(data:TestData){const question=data.question.trim();const fileEvidence=data.fileText.trim();if(data.profileId===expenseClaimProfile.id)setProfiles(old=>old.some(profile=>profile.id===expenseClaimProfile.id)?old:[...old,expenseClaimProfile]);setAssessmentProfileId(data.profileId);setAssessmentQuickProfile(data.quickProfile||null);setAssessment({title:data.title.trim()||`Test: ${data.fileName||question.slice(0,60)||"Risk question"}`,team:data.team,detail:question||`Assess the uploaded file ${data.fileName} for material organizational risk.`,level:"Medium",source:data.fileName?`Uploaded test file · ${data.fileName}`:"Typed test question",evidence:fileEvidence?`Uploaded file: ${data.fileName}\n\n${fileEvidence}`:`User-supplied test question: ${question}`,recommendation:""});setModal("assessment");}
  const shownRisks=useMemo(()=>risks.filter(r=>(`${r.title} ${r.team} ${r.detail} ${r.id}`.toLowerCase().includes(search.toLowerCase()))&&(riskLevel==="All levels"||r.level===riskLevel)&&(riskStatus==="All statuses"||r.status===riskStatus)),[risks,search,riskLevel,riskStatus]);
@@ -225,10 +228,13 @@ export default function Home(){
   const r:Risk={...assessment,id:`RSK-${1043+risks.length-seedRisks.length}`,level,title:assessment.title.trim(),detail:assessment.detail.trim(),status:"Needs review",time:"Just now",owner:assessment.team==="Cross-team"?"Cross-functional owner":`${assessment.team} team`,evidence:assessment.evidence.trim()||"No evidence supplied yet. Evidence validation is required.",recommendation,source,decision};
   const latest=workspaceSnapshotRef.current;
   const nextRisks=[r,...latest.risks];
+  const version=++saveVersionRef.current;
+  dirtyRef.current=true;
   try{
-   await persistWorkspace({risks:nextRisks,connectors:latest.connectors,profiles:latest.profiles});
+   await persistWorkspace({risks:nextRisks,connectors:latest.connectors,profiles:latest.profiles},version);
+   skipNextAutosaveRef.current=true;
    setRisks(nextRisks);setModal(null);setAssessmentFileName("");setAssessmentProfileId("");setAssessmentQuickProfile(null);setAssessment({title:"",team:"Engineering",detail:"",level:"Medium",source:"Manual assessment",evidence:"",recommendation:""});setSection("Risk assessments");notify(`Assessment saved to the workspace. ${modelNote}`);
-  }catch(error){notify(error instanceof Error?`Assessment was not saved: ${error.message}`:"Assessment was not saved. Try again.");}
+  }catch(error){dirtyRef.current=false;notify(error instanceof Error?`Assessment was not saved: ${error.message}`:"Assessment was not saved. Try again.");}
   finally{setSavingAssessment(false);}
  }
  async function assessConnectorSource(source:any):Promise<Risk>{

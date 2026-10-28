@@ -25,8 +25,16 @@ export async function PUT(request: Request) {
   }
   if (JSON.stringify(state).length > 1_000_000) return NextResponse.json({ error: "Workspace payload is too large" }, { status: 413 });
   try {
-    await saveWorkspaceState(workspaceId, state as { risks: any[]; connectors: any[]; profiles: any[] });
-    return NextResponse.json({ ok: true, updatedAt: new Date().toISOString() });
+    const expected = state as { risks: any[]; connectors: any[]; profiles: any[] };
+    await saveWorkspaceState(workspaceId, expected);
+    const persisted = await loadWorkspaceState(workspaceId);
+    const ids = (items: any[], key: string) => items.map((item) => String(item?.[key] ?? "")).filter(Boolean).sort().join("\n");
+    const verified = Boolean(persisted)
+      && ids(persisted!.risks, "id") === ids(expected.risks, "id")
+      && ids(persisted!.connectors, "name") === ids(expected.connectors, "name")
+      && ids(persisted!.profiles, "id") === ids(expected.profiles, "id");
+    if (!verified) throw new Error("Workspace read-after-write verification failed");
+    return NextResponse.json({ ok: true, verified: true, updatedAt: new Date().toISOString() });
   } catch (error) {
     console.error("Sentinel data write failed", error);
     return NextResponse.json({ error: "Could not save workspace to Neon. Check DATABASE_URL and database permissions." }, { status: 503 });

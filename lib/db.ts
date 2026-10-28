@@ -81,6 +81,7 @@ export async function saveWorkspaceState(workspaceId: string, state: WorkspaceSt
   const riskJson = JSON.stringify(risks);
   const connectorJson = JSON.stringify(connectors);
   const profileJson = JSON.stringify(profiles);
+  const stateJson = JSON.stringify({ risks, connectors, profiles });
 
   await sql`INSERT INTO sentinel_risks (workspace_id, id, title, team, level, status, detail, source, time_label, owner, evidence, recommendation, decision_output, sort_order)
     SELECT ${workspaceId}, item->>'id', COALESCE(item->>'title',''), COALESCE(item->>'team',''), COALESCE(item->>'level','Low'), COALESCE(item->>'status','Needs review'), COALESCE(item->>'detail',''), COALESCE(item->>'source',''), COALESCE(item->>'time',''), COALESCE(item->>'owner',''), COALESCE(item->>'evidence',''), COALESCE(item->>'recommendation',''), item->'decision', position::INTEGER
@@ -102,16 +103,25 @@ export async function saveWorkspaceState(workspaceId: string, state: WorkspaceSt
 
   await sql`UPDATE sentinel_workspaces SET state_initialized=TRUE, updated_at=NOW() WHERE id=${workspaceId}`;
   if (recordAudit) await sql`INSERT INTO sentinel_audit_events (workspace_id, event_type, summary) SELECT ${workspaceId}, 'workspace_saved', 'Workspace data saved' WHERE NOT EXISTS (SELECT 1 FROM sentinel_audit_events WHERE workspace_id=${workspaceId} AND event_type='workspace_saved' AND created_at > NOW() - INTERVAL '10 minutes')`;
+  await sql`INSERT INTO sentinel_workspace_state (user_email, state, updated_at) VALUES (${workspaceId}, ${stateJson}::jsonb, NOW())
+    ON CONFLICT (user_email) DO UPDATE SET state=EXCLUDED.state, updated_at=NOW()`;
 }
 
 export async function loadWorkspaceState(workspaceId: string): Promise<WorkspaceState | null> {
   await ensureSchema();
   await ensureWorkspace(workspaceId);
   const sql = getSql();
-  const workspace = await sql`SELECT state_initialized FROM sentinel_workspaces WHERE id=${workspaceId} LIMIT 1`;
+  const workspace = await sql`SELECT state_initialized, updated_at FROM sentinel_workspaces WHERE id=${workspaceId} LIMIT 1`;
+  const snapshotRows = await sql`SELECT state, updated_at FROM sentinel_workspace_state WHERE user_email=${workspaceId} LIMIT 1`;
+  const snapshot = snapshotRows[0]?.state as WorkspaceState | undefined;
+  const snapshotIsCurrent = snapshotRows[0]?.updated_at && workspace[0]?.updated_at
+    ? new Date(snapshotRows[0].updated_at).getTime() >= new Date(workspace[0].updated_at).getTime()
+    : Boolean(snapshotRows[0]?.updated_at);
+  if (snapshotIsCurrent && snapshot && Array.isArray(snapshot.risks) && Array.isArray(snapshot.connectors) && Array.isArray(snapshot.profiles)) {
+    return { ...snapshot, risks: snapshot.risks.map((risk: any) => ({ ...risk, decision: normalizeDecisionRationale(risk.decision) })) };
+  }
   if (!workspace[0]?.state_initialized) {
-    const legacy = await sql`SELECT state FROM sentinel_workspace_state WHERE user_email=${workspaceId} LIMIT 1`;
-    const state = legacy[0]?.state as WorkspaceState | undefined;
+    const state = snapshot;
     if (state && Array.isArray(state.risks) && Array.isArray(state.connectors) && Array.isArray(state.profiles)) {
       await saveWorkspaceState(workspaceId, state, false);
       await sql`INSERT INTO sentinel_audit_events (workspace_id, event_type, summary) VALUES (${workspaceId}, 'workspace_migrated', 'Legacy JSONB workspace migrated to normalized tables')`;
